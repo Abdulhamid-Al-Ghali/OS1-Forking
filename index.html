@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OS-1 Fork() Tree Solver</title>
+<meta name="description" content="Solve OS-1 fork() questions: turn C code and fork expressions into process trees, count printf outputs, track variables, and convert trees back into fork() code.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">OS</span> OS-1 Fork() Tree Solver</div>
+  <nav id="nav" aria-label="Main navigation">
+    <button class="nav-btn active" data-view="code">Code &rarr; Tree</button>
+    <button class="nav-btn" data-view="expr">Expression</button>
+    <button class="nav-btn" data-view="tree">Tree &rarr; Code</button>
+    <button class="nav-btn" data-view="practice">Practice</button>
+    <button class="nav-btn" data-view="rules">Rules</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ================= CODE -> TREE ================= -->
+<section id="view-code" class="view">
+  <h1 class="view-title">Code &rarr; Tree Solver</h1>
+  <div class="card">
+    <h3>1 &middot; Paste your fork() code</h3>
+    <textarea id="code-input" class="code-input" rows="10" spellcheck="false" placeholder="void main() {
+    if (!fork())
+        if (!fork())
+            printf(&quot;Im in&quot;);
+    fork();
+    printf(&quot;I am out&quot;);
+}"></textarea>
+    <p class="hint">Supported OS-1 subset: <code>fork()</code>, <code>if / else</code>, <code>for</code> / <code>while</code> loops, <code>break</code>, <code>exit(0)</code>, <code>printf("...")</code> (with <code>%d</code>), <code>int</code> variables with <code>++ -- += -=</code>, comparisons (<code>&lt; &lt;= &gt; &gt;= == !=</code>), and fork expressions with <code>&amp;&amp;</code> <code>||</code> <code>+</code> <code>*</code> <code>!</code> and parentheses. Anything else shows a friendly error.</p>
+    <div class="btn-row">
+      <button class="btn" id="btn-code-example">Load printf example</button>
+      <button class="btn" id="btn-code-loop">Load loop / x example</button>
+      <button class="btn" id="btn-code-clear">Clear</button>
+      <button class="btn primary" id="btn-code-solve">Solve code</button>
+    </div>
+    <div id="code-error" class="error" hidden></div>
+  </div>
+  <div id="code-results"></div>
+</section>
+
+<!-- ================= EXPRESSION ================= -->
+<section id="view-expr" class="view" hidden>
+  <h1 class="view-title">Expression Solver</h1>
+  <div class="card">
+    <h3>Fork expression</h3>
+    <input id="expr-input" class="expr-input" spellcheck="false" placeholder="fork() &amp;&amp; fork() || (fork() &amp;&amp; fork())">
+    <p class="hint">Short-circuit rules: <code>&amp;&amp;</code> skips the right side in the child (fork() = 0), <code>||</code> skips the right side in the parent (fork() &ne; 0). <code>+</code> and <code>*</code> always evaluate both sides. Parentheses are evaluated first.</p>
+    <div class="chips">
+      <button class="chip chip-btn" data-expr="fork(); fork();">fork(); fork();</button>
+      <button class="chip chip-btn" data-expr="fork() || fork()">fork() || fork()</button>
+      <button class="chip chip-btn" data-expr="fork() &amp;&amp; fork()">fork() &amp;&amp; fork()</button>
+      <button class="chip chip-btn" data-expr="fork() + fork()">fork() + fork()</button>
+      <button class="chip chip-btn" data-expr="fork() * fork()">fork() * fork()</button>
+      <button class="chip chip-btn" data-expr="fork() &amp;&amp; (fork() || fork())">fork() &amp;&amp; (fork() || fork())</button>
+      <button class="chip chip-btn" data-expr="fork() &amp;&amp; fork() || (fork() &amp;&amp; fork())">fork() &amp;&amp; fork() || (fork() &amp;&amp; fork())</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-expr-solve">Solve expression</button>
+    </div>
+    <div id="expr-error" class="error" hidden></div>
+  </div>
+  <div id="expr-results"></div>
+</section>
+
+<!-- ================= TREE -> CODE ================= -->
+<section id="view-tree" class="view" hidden>
+  <h1 class="view-title">Tree &rarr; fork() Code</h1>
+  <div class="card">
+    <h3>1 &middot; Describe the tree</h3>
+    <textarea id="tree-input" class="code-input" rows="6" spellcheck="false" placeholder="P0 -> P1, P2
+P1 -> P3
+P2 -> P4, P5"></textarea>
+    <p class="hint">One line per parent, children listed left to right in creation order. Both formats work: <code>P0 -&gt; P1, P2</code> or <code>P0: P1 P2</code>. The root should be P0. Number children in BFS order (P0's children first, then P1's children, ...) to get code that creates them exactly in P0, P1, P2... order.</p>
+    <h3>2 &middot; Code style</h3>
+    <div class="radio-row">
+      <label><input type="radio" name="gen-order" value="ordered" checked> Generate code in process order P0, P1, P2...</label>
+      <label><input type="radio" name="gen-order" value="any"> Generate any valid fork() code</label>
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="btn-tree-example">Load example</button>
+      <button class="btn primary" id="btn-tree-generate">Generate code</button>
+    </div>
+    <div id="tree-error" class="error" hidden></div>
+  </div>
+  <div id="tree-results"></div>
+</section>
+
+<!-- ================= PRACTICE ================= -->
+<section id="view-practice" class="view" hidden>
+  <h1 class="view-title">Practice Generator</h1>
+  <div class="card">
+    <h3>Question options</h3>
+    <p class="hint">Code &rarr; Tree: you get code or an expression and must draw the tree. Tree &rarr; Code: you get a random tree and must write fork() code that builds it.</p>
+    <div class="options-grid">
+      <label>Question type
+        <select id="g-qtype">
+          <option value="code2tree" selected>Code &rarr; Tree (solve given code)</option>
+          <option value="tree2code">Tree &rarr; Code (write the fork() code)</option>
+        </select>
+      </label>
+      <label>Difficulty
+        <select id="g-diff">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
+    </div>
+    <div class="check-grid" id="practice-toggles">
+      <label><input type="checkbox" id="chk-iffork" checked> Include if(fork())</label>
+      <label><input type="checkbox" id="chk-ifnot" checked> Include if(!fork())</label>
+      <label><input type="checkbox" id="chk-andor" checked> Include &amp;&amp; / ||</label>
+      <label><input type="checkbox" id="chk-plus" checked> Include + / *</label>
+      <label><input type="checkbox" id="chk-loops" checked> Include loops</label>
+      <label><input type="checkbox" id="chk-printf" checked> Include printf</label>
+      <label><input type="checkbox" id="chk-xvar" checked> Include variable x questions</label>
+    </div>
+    <div class="radio-row" id="practice-codestyle" style="display:none">
+      <label><input type="radio" name="p-gen-order" value="ordered" checked> Solution code in process order P0, P1, P2...</label>
+      <label><input type="radio" name="p-gen-order" value="any"> Any valid fork() code</label>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-generate">Generate question</button>
+      <button class="btn" id="btn-reveal" hidden>Reveal solution</button>
+      <button class="btn" id="btn-newq" hidden>New question</button>
+    </div>
+    <div id="practice-note" class="hint" hidden></div>
+  </div>
+  <div class="card" id="q-card" hidden>
+    <h3 id="q-title">Question</h3>
+    <p id="q-text"></p>
+    <pre class="codebox" id="q-code"></pre>
+    <div id="q-tree"></div>
+  </div>
+  <div id="practice-results"></div>
+</section>
+
+<!-- ================= RULES ================= -->
+<section id="view-rules" class="view" hidden>
+  <h1 class="view-title">Rules / Cheat Sheet</h1>
+
+  <div class="card rules">
+    <h3>Basic fork() rules</h3>
+    <ul>
+      <li><code>fork()</code> creates a new <b>child</b> of the calling process. The child is a copy of the parent and continues from the line right after the fork.</li>
+      <li>In the <b>parent</b>, fork() returns a <b>non-zero</b> value (the child's PID) &rarr; it behaves as <b>true</b>.</li>
+      <li>In the <b>child</b>, fork() returns <b>0</b> &rarr; it behaves as <b>false</b>.</li>
+      <li>If <b>n</b> fork calls are executed by every active process (no ifs, no short-circuits), the total number of processes is <b>2<sup>n</sup></b>. Example: <code>fork(); fork();</code> &rarr; 4 processes.</li>
+      <li>After fork(), the child gets a <b>copy of all variables</b>. Later changes in one process never affect the other.</li>
+      <li>Processes are named in creation order: P0 is the original, then P1, P2, P3...</li>
+    </ul>
+
+    <h3>Common patterns</h3>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Pattern</th><th>Total processes</th><th>Tree shape</th></tr></thead>
+      <tbody>
+        <tr><td><code>fork();</code></td><td>2</td><td>P0 &rarr; P1</td></tr>
+        <tr><td><code>fork(); fork();</code></td><td>4</td><td>P0 &rarr; P1, P2 &nbsp;&middot;&nbsp; P1 &rarr; P3</td></tr>
+        <tr><td><code>fork() || fork();</code></td><td>3</td><td>Chain: P0 &rarr; P1 &rarr; P2 (parent short-circuits, child runs the 2nd fork)</td></tr>
+        <tr><td><code>fork() &amp;&amp; fork();</code></td><td>3</td><td>Star: P0 &rarr; P1 and P0 &rarr; P2 (child short-circuits, parent runs the 2nd fork)</td></tr>
+        <tr><td><code>fork() + fork();</code></td><td>4</td><td>Same as <code>fork(); fork();</code> (both sides always run)</td></tr>
+        <tr><td><code>fork() * fork();</code></td><td>4</td><td>Same as <code>fork(); fork();</code> (both sides always run)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>if statements</h3>
+    <ul>
+      <li><code>if(fork()) ...</code> &rarr; only the <b>parent</b> enters the body (fork() is non-zero in the parent).</li>
+      <li><code>if(!fork()) ...</code> &rarr; only the <b>child</b> enters the body (!0 is true in the child).</li>
+      <li><code>if(fork()) break;</code> &rarr; the parent breaks. <b>Only children can fork</b> afterwards &rarr; the tree becomes a <b>chain</b>: P0 &rarr; P1 &rarr; P2 &rarr; ...</li>
+      <li><code>if(!fork()) break;</code> &rarr; the child breaks. <b>Only the parent forks</b> afterwards &rarr; the tree becomes a <b>star</b>: P0 &rarr; P1, P0 &rarr; P2, P0 &rarr; P3 ...</li>
+      <li>Nested ifs work the same way &mdash; follow each process separately.</li>
+    </ul>
+
+    <h3>Expressions</h3>
+    <ul>
+      <li>Parentheses <code>( )</code> are evaluated first.</li>
+      <li><code>a &amp;&amp; b</code>: if <code>a</code> is 0 (child side), <code>b</code> is <b>skipped</b>.</li>
+      <li><code>a || b</code>: if <code>a</code> is non-zero (parent side), <code>b</code> is <b>skipped</b>.</li>
+      <li><code>+</code> and <code>*</code>: <b>no short-circuit</b> &mdash; both sides always run, same tree as <code>fork(); fork();</code>.</li>
+    </ul>
+
+    <h3>printf counting</h3>
+    <ul>
+      <li>Every process that reaches a <code>printf</code> prints it exactly once &mdash; count all processes that reach that line.</li>
+      <li>The actual order of the printed lines may vary (the OS schedules processes freely). The <b>counts</b> are what matter in exams.</li>
+    </ul>
+
+    <h3>Variables after fork</h3>
+    <ul>
+      <li>At the moment of fork(), the child receives a snapshot of <code>i</code>, <code>j</code>, <code>x</code>, ...</li>
+      <li>From then on, parent and child update their own private copies &mdash; that is why different processes end with different final values of <code>x</code>.</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer>Made by Abdulhamid AlGhali - OS1 Fork Solver</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
