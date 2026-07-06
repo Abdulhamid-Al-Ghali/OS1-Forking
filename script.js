@@ -469,7 +469,85 @@ const TreeCode = (() => {
     return lines.join('\n');
   }
 
-  return { parseTree, genOrdered, genNested };
+  /* Try to express the tree as ONE fork() expression using &&, ||, +, *, !.
+     Returns { expr, method } or null when impossible / too large to search.
+     Every candidate is verified by running it through the simulator. */
+  function genExpression(tree) {
+    if (tree.bfs.length < 2) return null;
+    const root = tree.bfs[0];
+    const kidsOf = lab => tree.children[lab] || [];
+    const idx = {}; tree.bfs.forEach((l, i) => { idx[l] = i; });
+    const wanted = [];
+    tree.bfs.forEach(l => kidsOf(l).forEach(c => wanted.push(idx[l] + '>' + idx[c])));
+    const wantedStr = wanted.sort().join(' ');
+    const verify = expr => {
+      try {
+        const r = Engine.run(expr + ';');
+        return r.processes.length === tree.bfs.length &&
+          r.edges.map(e => e.from + '>' + e.to).sort().join(' ') === wantedStr;
+      } catch (e) { return false; }
+    };
+    const stripOuter = e => {
+      if (e[0] !== '(') return e;
+      let d = 0;
+      for (let i = 0; i < e.length; i++) {
+        if (e[i] === '(') d++;
+        else if (e[i] === ')') { d--; if (d === 0) return i === e.length - 1 ? e.slice(1, -1) : e; }
+      }
+      return e;
+    };
+    /* 1) direct pattern: at every node, only the LAST-created child may have its own children.
+       Star of leaves -> fork() && fork() && ...; chain -> fork() || ...; combinations nest on the last child. */
+    const shapeOK = lab => kidsOf(lab).every((k, i, arr) =>
+      !kidsOf(k).length || (i === arr.length - 1 && shapeOK(k)));
+    const build = lab => kidsOf(lab).map(k => {
+      if (!kidsOf(k).length) return 'fork()';
+      const sub = build(k);
+      return '(fork() || ' + (kidsOf(k).length > 1 ? '(' + sub + ')' : sub) + ')';
+    }).join(' && ');
+    /* 2) sequential doubling helper: subtree of 2^F nodes may be fork() + fork() + ... */
+    const subSize = lab => 1 + kidsOf(lab).reduce((s, k) => s + subSize(k), 0);
+    /* 3) uniform branches: the root creates k children with an && star; all k children end
+       falsy, so they ALL evaluate the || right side and each builds the same subtree.
+       (This is the shape of course example 7: fork() && fork() || (fork() && fork()).) */
+    function candList(lab, depth) {
+      const kids = kidsOf(lab);
+      const out = [];
+      if (!kids.length || depth > 4) return out;
+      if (shapeOK(lab)) out.push(build(lab));
+      const f = Math.log2(subSize(lab));
+      if (Number.isInteger(f) && f >= 1 && f <= 4) out.push(new Array(f).fill('fork()').join(' + '));
+      if (kids.every(k => kidsOf(k).length)) {
+        const lhs = new Array(kids.length).fill('fork()').join(' && ');
+        for (const sub of candList(kids[0], depth + 1)) out.push(lhs + ' || (' + sub + ')');
+      }
+      return out;
+    }
+    for (const cand of candList(root, 0)) {
+      const e = stripOuter(cand);
+      if (verify(e)) return { expr: e, method: 'pattern' };
+    }
+    /* 4) bounded brute-force search for small trees (up to 5 processes = 4 forks) */
+    const forks = tree.bfs.length - 1;
+    if (forks <= 4) {
+      const memo = [null, ['fork()', '!fork()']];
+      for (let k = 2; k <= forks; k++) {
+        const list = [];
+        for (let i = 1; i < k; i++)
+          for (const a of memo[i]) for (const b of memo[k - i])
+            for (const op of ['&&', '||', '+', '*'])
+              list.push('(' + a + ' ' + op + ' ' + b + ')');
+        memo[k] = list;
+      }
+      for (const cand of memo[forks]) {
+        const e = stripOuter(cand);
+        if (verify(e)) return { expr: e, method: 'search' };
+      }
+    }
+    return null;
+  }
+
+  return { parseTree, genOrdered, genNested, genExpression };
 })();
 
 /* ============================ PRACTICE GENERATOR ============================ */
@@ -804,7 +882,11 @@ if (typeof document !== 'undefined') (function UI() {
   /* ---------- Tree -> Code ---------- */
   function renderTreeToCode(treeText, mode, containerSel) {
       const tree = TreeCode.parseTree(treeText);
-      const codeText = mode === 'ordered' ? TreeCode.genOrdered(tree) : TreeCode.genNested(tree);
+      const exprRes = mode === 'expr' ? TreeCode.genExpression(tree) : null;
+      const exprFallback = mode === 'expr' && !exprRes;
+      const codeText = mode === 'expr'
+        ? (exprRes ? exprRes.expr + ';' : TreeCode.genOrdered(tree))
+        : (mode === 'ordered' ? TreeCode.genOrdered(tree) : TreeCode.genNested(tree));
 
       /* pseudo-processes for the user's tree drawing */
       const idx = {}; tree.bfs.forEach((lab, i) => { idx[lab] = i; });
@@ -828,17 +910,20 @@ if (typeof document !== 'undefined') (function UI() {
       html += '<div class="card"><h3>Your tree</h3><div class="fact-grid">' +
         '<div class="fact"><b>' + tree.nodes.length + '</b><span>nodes (processes)</span></div>' +
         '<div class="fact"><b>' + pEdges.length + '</b><span>edges (fork calls)</span></div>' +
-        '<div class="fact"><b>' + (mode === 'ordered' ? 'P0, P1, P2\u2026' : 'any valid') + '</b><span>creation order style</span></div>' +
+        '<div class="fact"><b>' + (mode === 'expr' ? 'expression' : mode === 'ordered' ? 'P0, P1, P2\u2026' : 'any valid') + '</b><span>output style</span></div>' +
         '</div>' + mapNote +
         '<div class="table-scroll"><table><thead><tr><th>Parent</th><th>Children (creation order)</th></tr></thead><tbody>' +
         tree.bfs.filter(lab => (tree.children[lab] || []).length).map(lab => '<tr><td><b>' + esc(lab) + '</b></td><td>' + tree.children[lab].map(esc).join(', ') + '</td></tr>').join('') +
         '</tbody></table></div>' +
         '<div class="tree-toolbar"></div><div class="tree-wrap" data-zoom="1">' + buildTreeSVG(pProcs, pEdges, { label: p => tree.bfs[p.pid] }) + '</div></div>';
 
-      html += '<div class="card"><h3>Generated fork() code</h3>' +
+      html += '<div class="card"><h3>' + (mode === 'expr' ? (exprFallback ? 'Generated fork() code (expression not possible)' : 'Generated fork() expression') : 'Generated fork() code') + '</h3>' +
+        (exprFallback ? '<div class="error" style="display:block">This exact tree cannot be produced by a single fork() expression with the OS-1 operators (or it is too large to search). Expressions can only build certain shapes: chains via ||, stars via &amp;&amp;, sequential doubling via + or *, and combinations where only the last-created child keeps forking. Showing ordered C code instead \u2014 C code can build any tree.</div>' : '') +
         '<div class="btn-row"><button class="btn" data-act="copy-code">Copy code</button></div>' +
         '<pre class="codebox">' + esc(codeText) + '</pre>' +
-        '<p class="hint">' + (mode === 'ordered'
+        '<p class="hint">' + (mode === 'expr' && exprRes
+          ? 'How to read it: with <code>&amp;&amp;</code> only the parent (fork() \u2260 0) evaluates the right side; with <code>||</code> only the child (fork() = 0) evaluates the right side; with <code>+</code> and <code>*</code> both sides always run; <code>!</code> swaps the parent/child roles. Parentheses are evaluated first.'
+          : mode === 'ordered' || exprFallback
           ? 'Each <code>if (fork() == 0) { \u2026 exit(0); }</code> block is one child. A parent creates all of its children first, so processes are created exactly in P0, P1, P2\u2026 (BFS) order under the course convention.'
           : 'Nested style without exit(): each child lives inside the <code>if (fork() == 0)</code> branch and the parent continues in the <code>else</code> branch. Any code that produces this parent\u2013child structure is a valid answer.') + '</p>' +
         (match ? '<span class="ok-badge">\u2713 Verified \u2014 running this code produces exactly your tree (' + res.processes.length + ' processes)</span>'
@@ -940,6 +1025,7 @@ if (typeof document !== 'undefined') (function UI() {
     else if (h === '#demo-loop') { show('code'); $('#code-input').value = EX_LOOP; solveCode(); }
     else if (h === '#demo-expr') { show('expr'); $('#expr-input').value = 'fork() && fork() || (fork() && fork())'; solveExpr(); }
     else if (h === '#demo-tree') { show('tree'); $('#tree-input').value = EX_TREE; genTree(); }
+    else if (h === '#demo-tree-expr') { show('tree'); $('#tree-input').value = 'P0 -> P1, P2\nP1 -> P3, P4\nP2 -> P5, P6'; document.querySelector('input[name="gen-order"][value="expr"]').checked = true; genTree(); }
     else if (h === '#demo-practice') { show('practice'); $('#g-diff').value = 'hard'; genQuestion(); revealSolution(); }
     else if (h === '#demo-practice-tree') { show('practice'); $('#g-qtype').value = 'tree2code'; syncPracticeOptions(); $('#g-diff').value = 'medium'; genQuestion(); revealSolution(); }
   }

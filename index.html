@@ -83,6 +83,7 @@ P2 -> P4, P5"></textarea>
     <div class="radio-row">
       <label><input type="radio" name="gen-order" value="ordered" checked> Generate code in process order P0, P1, P2...</label>
       <label><input type="radio" name="gen-order" value="any"> Generate any valid fork() code</label>
+      <label><input type="radio" name="gen-order" value="expr"> Generate a fork() expression (&amp;&amp;, ||, +, !)</label>
     </div>
     <div class="btn-row">
       <button class="btn" id="btn-tree-example">Load example</button>
@@ -126,6 +127,7 @@ P2 -> P4, P5"></textarea>
     <div class="radio-row" id="practice-codestyle" style="display:none">
       <label><input type="radio" name="p-gen-order" value="ordered" checked> Solution code in process order P0, P1, P2...</label>
       <label><input type="radio" name="p-gen-order" value="any"> Any valid fork() code</label>
+      <label><input type="radio" name="p-gen-order" value="expr"> Solution as a fork() expression</label>
     </div>
     <div class="btn-row">
       <button class="btn primary" id="btn-generate">Generate question</button>
