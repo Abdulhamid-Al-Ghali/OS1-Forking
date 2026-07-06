@@ -584,10 +584,14 @@ const Generator = (() => {
 
   /* ---- random tree questions (Tree -> Code) ---- */
   const ASK_T2C = 'Write fork() C code that creates exactly this process tree. P0 is the original process and children are numbered in creation order.';
-  function generateTree(level) {
-    const n = level === 'easy' ? 3 + Math.floor(Math.random() * 2)
-            : level === 'medium' ? 5 + Math.floor(Math.random() * 2)
-            : 7 + Math.floor(Math.random() * 3);
+  const ASK_T2E = 'Write ONE fork() expression (using &&, ||, + and ! if needed) that creates exactly this process tree. P0 is the original process and children are numbered in creation order.';
+  function treeSize(level) {
+    return level === 'easy' ? 3 + Math.floor(Math.random() * 2)
+         : level === 'medium' ? 5 + Math.floor(Math.random() * 2)
+         : 7 + Math.floor(Math.random() * 3);
+  }
+  function randomTreeText(level) {
+    const n = treeSize(level);
     const maxKids = level === 'easy' ? 2 : 3;
     const parent = [null], kidCount = [0];
     for (let i = 1; i < n; i++) {
@@ -601,11 +605,43 @@ const Generator = (() => {
     const order = [0];
     for (let q = 0; q < order.length; q++) (children[order[q]] || []).forEach(c => order.push(c));
     const label = {}; order.forEach((old, i) => { label[old] = 'P' + i; });
-    const lines = order.filter(o => (children[o] || []).length)
-      .map(o => label[o] + ' -> ' + children[o].map(c => label[c]).join(', '));
-    let ask = ASK_T2C;
+    return order.filter(o => (children[o] || []).length)
+      .map(o => label[o] + ' -> ' + children[o].map(c => label[c]).join(', ')).join('\n');
+  }
+  /* Random tree that is GUARANTEED to be expressible as one fork() expression:
+     at every node only the last-created child keeps forking (chains, stars, mixes). */
+  function exprTreeText(level) {
+    const n = treeSize(level), maxKids = level === 'easy' ? 2 : 3;
+    const children = {}; let cur = 0, next = 1;
+    while (next < n) {
+      const k = Math.min(1 + Math.floor(Math.random() * maxKids), n - next);
+      children[cur] = [];
+      for (let i = 0; i < k; i++) children[cur].push(next + i);
+      next += k; cur = next - 1;
+    }
+    return Object.keys(children).map(p => 'P' + p + ' -> ' + children[p].map(c => 'P' + c).join(', ')).join('\n');
+  }
+  function isExpressible(treeText) {
+    try { return !!TreeCode.genExpression(TreeCode.parseTree(treeText)); } catch (e) { return false; }
+  }
+  function treeAsk(level, exprMode) {
+    let ask = exprMode ? ASK_T2E : ASK_T2C;
     if (level === 'hard') ask += ' Also state how many fork() calls are needed (one per edge).';
-    return { type: 'tree2code', treeText: lines.join('\n'), ask, note: '' };
+    return ask;
+  }
+  function generateTree(level, exprMode) {
+    let treeText = null;
+    if (exprMode) {
+      /* only accept trees VERIFIED to have a fork() expression solution */
+      for (let a = 0; a < 150 && !treeText; a++) {
+        const t = randomTreeText(level);
+        if (isExpressible(t)) treeText = t;
+      }
+      if (!treeText) treeText = exprTreeText(level);
+    } else {
+      treeText = randomTreeText(level);
+    }
+    return { type: 'tree2code', level, exprMode: !!exprMode, treeText, ask: treeAsk(level, exprMode), note: '' };
   }
 
   let lastIdx = -1;
@@ -623,7 +659,7 @@ const Generator = (() => {
     return { type: 'code2tree', code: pool[idx].code, ask: pool[idx].ask, note };
   }
 
-  return { generate, generateTree, templates: T };
+  return { generate, generateTree, treeAsk, isExpressible, templates: T };
 })();
 
 /* ============================ NODE EXPORT (for tests) ============================ */
@@ -967,8 +1003,9 @@ if (typeof document !== 'undefined') (function UI() {
   function genQuestion() {
     const level = $('#g-diff').value;
     if (qType() === 'tree2code') {
-      currentQ = Generator.generateTree(level);
-      $('#q-title').textContent = 'Question \u2014 Tree \u2192 Code (' + level + ')';
+      const exprMode = document.querySelector('input[name="p-gen-order"]:checked').value === 'expr';
+      currentQ = Generator.generateTree(level, exprMode);
+      $('#q-title').textContent = 'Question \u2014 Tree \u2192 ' + (exprMode ? 'Expression' : 'Code') + ' (' + level + ')';
       $('#q-code').textContent = currentQ.treeText;
       $('#q-tree').innerHTML = questionTreeHTML(currentQ.treeText);
     } else {
@@ -1013,6 +1050,24 @@ if (typeof document !== 'undefined') (function UI() {
     }
   }
   $('#g-qtype').addEventListener('change', syncPracticeOptions);
+  /* If the user switches the solution style AFTER a tree question was generated,
+     keep the question consistent: expression mode must always show a solvable tree. */
+  document.querySelectorAll('input[name="p-gen-order"]').forEach(r => r.addEventListener('change', () => {
+    if (!currentQ || currentQ.type !== 'tree2code' || $('#q-card').hidden) return;
+    const exprMode = document.querySelector('input[name="p-gen-order"]:checked').value === 'expr';
+    if (exprMode && !Generator.isExpressible(currentQ.treeText)) {
+      genQuestion();
+      const note = $('#practice-note');
+      note.hidden = false;
+      note.textContent = 'New tree generated \u2014 the previous tree could not be written as a single fork() expression.';
+      return;
+    }
+    currentQ.exprMode = exprMode;
+    currentQ.ask = Generator.treeAsk(currentQ.level, exprMode);
+    $('#q-text').textContent = currentQ.ask;
+    $('#q-title').textContent = 'Question \u2014 Tree \u2192 ' + (exprMode ? 'Expression' : 'Code') + ' (' + currentQ.level + ')';
+    $('#practice-results').innerHTML = '';
+  }));
   syncPracticeOptions();
   $('#btn-generate').addEventListener('click', genQuestion);
   $('#btn-newq').addEventListener('click', genQuestion);
